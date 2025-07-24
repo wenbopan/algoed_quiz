@@ -1,0 +1,153 @@
+[
+    {
+      "question": "Which ancient Greek philosopher is known as the 'Father of Philosophy'?",
+      "choices": [
+        "Plato",
+        "Aristotle",
+        "Socrates",
+        "Pythagoras"
+      ],
+      "answer": "Socrates"
+    },
+    {
+      "question": "What is the main work of Plato called?",
+      "choices": [
+        "The Republic",
+        "Nicomachean Ethics",
+        "Meditations",
+        "Beyond Good and Evil"
+      ],
+      "answer": "The Republic"
+    },
+    {
+      "question": "Which philosopher wrote 'Critique of Pure Reason'?",
+      "choices": [
+        "Immanuel Kant",
+        "Georg Wilhelm Friedrich Hegel",
+        "Friedrich Nietzsche",
+        "René Descartes"
+      ],
+      "answer": "Immanuel Kant"
+    },
+    {
+      "question": "Who is known for the statement 'I think, therefore I am'?",
+      "choices": [
+        "Thomas Hobbes",
+        "Blaise Pascal",
+        "René Descartes",
+        "David Hume"
+      ],
+      "answer": "René Descartes"
+    },
+    {
+      "question": "Which work is Aristotle famous for in the field of ethics?",
+      "choices": [
+        "The Nicomachean Ethics",
+        "The Politics",
+        "The Republic",
+        "Summa Theologica"
+      ],
+      "answer": "The Nicomachean Ethics"
+    },
+    {
+      "question": "Which philosopher is best known for his concept of the 'Ubermensch' (Overman)?",
+      "choices": [
+        "Friedrich Nietzsche",
+        "Karl Marx",
+        "Søren Kierkegaard",
+        "Jean-Paul Sartre"
+      ],
+      "answer": "Friedrich Nietzsche"
+    },
+    {
+      "question": "Who wrote 'Being and Nothingness', a foundational text in existentialism?",
+      "choices": [
+        "Albert Camus",
+        "Martin Heidegger",
+        "Jean-Paul Sartre",
+        "Simone de Beauvoir"
+      ],
+      "answer": "Jean-Paul Sartre"
+    },
+    {
+      "question": "Which philosopher is often credited with founding utilitarianism?",
+      "choices": [
+        "John Stuart Mill",
+        "Jeremy Bentham",
+        "Immanuel Kant",
+        "David Hume"
+      ],
+      "answer": "Jeremy Bentham"
+    },
+    {
+      "question": "What is the name of the ethical theory that emphasizes duty and moral rules, as developed by Kant?",
+      "choices": [
+        "Consequentialism",
+        "Utilitarianism",
+        "Deontological Ethics",
+        "Virtue Ethics"
+      ],
+      "answer": "Deontological Ethics"
+    },
+    {
+      "question": "Which philosopher is associated with the allegory of the cave?",
+      "choices": [
+        "Socrates",
+        "Plato",
+        "Aristotle",
+        "Epicurus"
+      ],
+      "answer": "Plato"
+    },
+    {
+      "question": "Who is the author of 'Thus Spoke Zarathustra'?",
+      "choices": [
+        "Friedrich Nietzsche",
+        "Arthur Schopenhauer",
+        "Karl Marx",
+        "Martin Heidegger"
+      ],
+      "answer": "Friedrich Nietzsche"
+    },
+    {
+      "question": "Which philosophical movement emphasizes absurdity, the lack of inherent meaning in life, and was popularized by Camus?",
+      "choices": [
+        "Existentialism",
+        "Phenomenology",
+        "Absurdism",
+        "Stoicism"
+      ],
+      "answer": "Absurdism"
+    },
+    {
+      "question": "Who wrote 'Leviathan', a work that lays the foundation for social contract theory?",
+      "choices": [
+        "John Locke",
+        "Thomas Hobbes",
+        "Jean-Jacques Rousseau",
+        "Voltaire"
+      ],
+      "answer": "Thomas Hobbes"
+    },
+    {
+      "question": "Which philosopher is known for his writings on the 'will to power' and pessimism about human nature?",
+      "choices": [
+        "Friedrich Nietzsche",
+        "Arthur Schopenhauer",
+        "René Descartes",
+        "Immanuel Kant"
+      ],
+      "answer": "Arthur Schopenhauer"
+    },
+    {
+      "question": "The concept of 'tabula rasa' (blank slate) is most associated with which philosopher?",
+      "choices": [
+        "John Locke",
+        "Plato",
+        "Socrates",
+        "René Descartes"
+      ],
+      "answer": "John Locke"
+    }
+  ]
+  
