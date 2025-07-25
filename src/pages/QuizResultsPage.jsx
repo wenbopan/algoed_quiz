@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { doc, getDoc } from 'firebase/firestore';
+import { doc, getDoc, collection, query, where, getDocs } from 'firebase/firestore';
 import { db, auth } from '../firebase';
 import { onAuthStateChanged } from 'firebase/auth';
 
@@ -9,11 +9,12 @@ const QuizResultsPage = () => {
   const navigate = useNavigate();
   
   const [user, setUser] = useState(null);
+  const [quizResults, setQuizResults] = useState(null);
   const [quiz, setQuiz] = useState(null);
-  const [results, setResults] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
+  // Auth check
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       if (currentUser) {
@@ -22,6 +23,7 @@ const QuizResultsPage = () => {
           return;
         }
         setUser(currentUser);
+        fetchResultsData(currentUser.uid);
       } else {
         navigate('/login');
       }
@@ -30,189 +32,211 @@ const QuizResultsPage = () => {
     return () => unsubscribe();
   }, [navigate, userId, quizId]);
 
-  useEffect(() => {
-    const fetchResults = async () => {
-      if (!user) return;
+  const fetchResultsData = async (currentUserId) => {
+    try {
+      console.log('Fetching quiz results for:', { currentUserId, quizId });
       
-      try {
-        console.log('Fetching results for user:', user.uid, 'quiz:', quizId);
-        
-        // Fetch quiz information
-        const quizDoc = await getDoc(doc(db, 'quizzes', quizId));
-        if (quizDoc.exists()) {
-          setQuiz({ id: quizDoc.id, ...quizDoc.data() });
-          console.log('Quiz found:', quizDoc.data().name);
-        } else {
-          console.log('Quiz not found');
-        }
-
-        // Try to fetch from userProgress first (most recent data)
-        const progressDocRef = doc(db, 'userProgress', `${user.uid}_${quizId}`);
-        const progressDoc = await getDoc(progressDocRef);
-        
-        console.log('Progress doc exists:', progressDoc.exists());
-        
-        if (progressDoc.exists()) {
-          const progressData = progressDoc.data();
-          console.log('Progress data:', progressData);
-          
-          // Check if quiz is completed
-          if (progressData.status === 'completed') {
-            setResults({
-              score: progressData.finalScore || progressData.score || 0,
-              totalQuestions: progressData.totalQuestions || 0,
-              percentageScore: progressData.percentageScore || Math.round(((progressData.finalScore || progressData.score || 0) / (progressData.totalQuestions || 1)) * 100),
-              timeTaken: progressData.timeTaken || 0, // Use stored timeTaken directly
-              answers: progressData.answers || [],
-              status: progressData.status || 'completed'
-            });
-            console.log('Results set from progress data');
-            return;
-          } else {
-            console.log('Quiz not completed yet, status:', progressData.status);
-            setError('Quiz not completed yet. Please finish the quiz first.');
-            return;
-          }
-        }
-        
-        // If no progress data, try quizResults collection
-        console.log('No progress data found, checking quizResults...');
-        // Note: We would need to query by userId and quizId since results have timestamps
-        setError('Quiz results not found. Please complete the quiz first.');
-        
-      } catch (err) {
-        console.error('Error fetching results:', err);
-        setError('Failed to load quiz results: ' + err.message);
-      } finally {
+      // Fetch quiz data
+      const quizDoc = await getDoc(doc(db, 'quizzes', quizId));
+      if (!quizDoc.exists()) {
+        setError('Quiz not found');
         setLoading(false);
+        return;
       }
-    };
+      
+      const quizData = { id: quizDoc.id, ...quizDoc.data() };
+      setQuiz(quizData);
 
-    fetchResults();
-  }, [user, quizId]);
+      // Fetch live quiz results for this user and quiz
+      const resultsQuery = query(
+        collection(db, 'liveQuizResults'),
+        where('userId', '==', currentUserId),
+        where('quizId', '==', quizId)
+      );
+      
+      const resultsSnapshot = await getDocs(resultsQuery);
+      
+      if (resultsSnapshot.empty) {
+        setError('No quiz results found');
+        setLoading(false);
+        return;
+      }
 
-  const formatTime = (seconds) => {
-    const hours = Math.floor(seconds / 3600);
-    const minutes = Math.floor((seconds % 3600) / 60);
-    const secs = seconds % 60;
-    
-    if (hours > 0) {
-      return `${hours}h ${minutes}m ${secs}s`;
-    } else if (minutes > 0) {
-      return `${minutes}m ${secs}s`;
-    } else {
-      return `${secs}s`;
+      // Get the most recent result if multiple sessions
+      const results = resultsSnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      
+      // Sort by last answered date and take the most recent
+      results.sort((a, b) => (b.lastAnsweredAt?.toDate?.() || b.lastAnsweredAt) - (a.lastAnsweredAt?.toDate?.() || a.lastAnsweredAt));
+      const latestResult = results[0];
+      
+      console.log('Latest quiz result:', latestResult);
+      setQuizResults(latestResult);
+      
+    } catch (error) {
+      console.error('Error fetching results:', error);
+      setError('Failed to load quiz results');
+    } finally {
+      setLoading(false);
     }
   };
 
+  const formatTime = (timeSpent) => {
+    if (!timeSpent) return 'N/A';
+    const minutes = Math.floor(timeSpent / 60);
+    const seconds = timeSpent % 60;
+    return `${minutes}m ${seconds}s`;
+  };
+
+  const getResultIcon = (isCorrect) => {
+    return isCorrect ? '✅' : '❌';
+  };
+
   const getScoreColor = (percentage) => {
-    if (percentage >= 90) return '#4caf50'; // Green
-    if (percentage >= 70) return '#ff9800'; // Orange
-    return '#f44336'; // Red
-  };
-
-  const getScoreEmoji = (percentage) => {
-    if (percentage >= 90) return '🎉';
-    if (percentage >= 70) return '👍';
-    return '📚';
-  };
-
-  const getPerformanceMessage = (percentage) => {
-    if (percentage >= 90) return 'Excellent work!';
-    if (percentage >= 80) return 'Great job!';
-    if (percentage >= 70) return 'Good effort!';
-    if (percentage >= 60) return 'Keep practicing!';
-    return 'Don\'t give up, try again!';
+    if (percentage >= 90) return '#4caf50';
+    if (percentage >= 70) return '#ff9800';
+    return '#f44336';
   };
 
   if (loading) {
     return (
       <div style={styles.container}>
-        <div style={styles.loading}>Loading your results...</div>
+        <div style={styles.loading}>Loading quiz results...</div>
       </div>
     );
   }
 
-  if (error) {
+  if (error || !quizResults || !quiz) {
     return (
       <div style={styles.container}>
-        <div style={styles.error}>{error}</div>
-        <button style={styles.dashboardBtn} onClick={() => navigate(`/${userId}/dashboard`)}>
+        <div style={styles.error}>{error || 'Results not found'}</div>
+        <button style={styles.backBtn} onClick={() => navigate(`/${userId}/dashboard`)}>
           Back to Dashboard
         </button>
       </div>
     );
   }
 
+  const percentage = quiz.questions.length > 0 ? 
+    ((quizResults.currentScore / quiz.questions.length) * 100).toFixed(1) : 0;
+
   return (
     <div style={styles.container}>
-      <div style={styles.resultsCard}>
-        {/* Header */}
-        <div style={styles.header}>
-          <div style={styles.logo}>algoed</div>
-          <div style={styles.quizTitle}>{quiz?.name || 'Quiz Complete'}</div>
-        </div>
+      {/* Header */}
+      <div style={styles.header}>
+        <h1 style={styles.title}>Quiz Results</h1>
+        <button style={styles.backBtn} onClick={() => navigate(`/${userId}/dashboard`)}>
+          Back to Dashboard
+        </button>
+      </div>
 
-        {/* Score Section */}
-        <div style={styles.scoreSection}>
-          <div style={styles.scoreEmoji}>{getScoreEmoji(results?.percentageScore || 0)}</div>
-          <div style={{...styles.scoreNumber, color: getScoreColor(results?.percentageScore || 0)}}>
-            {results?.percentageScore || 0}%
-          </div>
-          <div style={styles.scoreMessage}>
-            {getPerformanceMessage(results?.percentageScore || 0)}
-          </div>
-          <div style={styles.scoreDetails}>
-            You got {results?.score || 0} out of {results?.totalQuestions || 0} questions correct
-          </div>
+      {/* Combined Quiz Info and Score Summary */}
+      <div style={styles.mainSummary}>
+        <h2 style={styles.quizName}>{quiz.name}</h2>
+        <div style={styles.quizMeta}>
+          <span>Category: {quiz.category}</span>
+          <span>Completed: {quizResults.lastAnsweredAt?.toDate?.()?.toLocaleDateString() || 'Unknown'}</span>
         </div>
-
-        {/* Stats Section */}
-        <div style={styles.statsSection}>
-          <div style={styles.statCard}>
-            <div style={styles.statIcon}>⏱️</div>
-            <div style={styles.statLabel}>Time Taken</div>
-            <div style={styles.statValue}>{formatTime(results?.timeTaken || 0)}</div>
+        
+        <div style={styles.scoreContainer}>
+          <div style={styles.scoreCard}>
+            <div style={styles.scoreNumber}>
+              {quizResults.currentScore}/{quiz.questions.length}
+            </div>
+            <div style={{...styles.scorePercentage, color: getScoreColor(parseFloat(percentage))}}>
+              {percentage}%
+            </div>
+            <div style={styles.scoreLabel}>Final Score</div>
           </div>
           
-          <div style={styles.statCard}>
-            <div style={styles.statIcon}>🎯</div>
-            <div style={styles.statLabel}>Accuracy</div>
-            <div style={styles.statValue}>{results?.percentageScore || 0}%</div>
+          <div style={styles.statsGrid}>
+            <div style={styles.statItem}>
+              <span style={styles.statValue}>{quizResults.questionsAnswered}</span>
+              <span style={styles.statLabel}>Questions Answered</span>
+            </div>
+            <div style={styles.statItem}>
+              <span style={styles.statValue}>{quizResults.currentScore}</span>
+              <span style={styles.statLabel}>Correct Answers</span>
+            </div>
+            <div style={styles.statItem}>
+              <span style={styles.statValue}>{quiz.questions.length - quizResults.questionsAnswered}</span>
+              <span style={styles.statLabel}>Not Answered</span>
+            </div>
           </div>
-          
-          <div style={styles.statCard}>
-            <div style={styles.statIcon}>📊</div>
-            <div style={styles.statLabel}>Questions</div>
-            <div style={styles.statValue}>{results?.score || 0}/{results?.totalQuestions || 0}</div>
-          </div>
         </div>
+      </div>
 
-        {/* Action Buttons */}
-        <div style={styles.actionSection}>
-          <button 
-            style={styles.dashboardBtn} 
-            onClick={() => navigate(`/${userId}/dashboard`)}
-          >
-            Back to Dashboard
-          </button>
-          <button 
-            style={styles.retakeBtn} 
-            onClick={() => navigate(`/${userId}/quiz/${quizId}`)}
-          >
-            Retake Quiz
-          </button>
-        </div>
+      {/* Detailed Question Review */}
+      <div style={styles.questionsSection}>
+        <h3 style={styles.sectionTitle}>Question by Question Review</h3>
+        
+        {quiz.questions.map((questionData, index) => {
+          // Find the answer for this question (if any)
+          const answer = (quizResults.answers || []).find(a => a.questionIndex === index);
+          const hasAnswer = !!answer;
+          const userAnswer = answer?.userAnswer || null;
+          const isCorrect = answer?.isCorrect || false;
+          const isAutoSubmitted = answer?.isAutoSubmitted || false;
 
-        {/* Additional Info */}
-        <div style={styles.additionalInfo}>
-          <p style={styles.infoText}>
-            Quiz completed on {new Date().toLocaleDateString()}
-          </p>
-          <p style={styles.infoText}>
-            Category: {quiz?.category || 'Unknown'}
-          </p>
-        </div>
+          return (
+            <div key={index} style={styles.questionCard}>
+              <div style={styles.questionHeader}>
+                <span style={styles.questionNumber}>Question {index + 1}</span>
+                <span style={styles.questionResult}>
+                  {hasAnswer ? 
+                    (isCorrect ? '✅ Correct' : '❌ Incorrect') : 
+                    '⏰ Not Answered'
+                  }
+                </span>
+              </div>
+              
+              <div style={styles.questionText}>
+                {questionData.question}
+              </div>
+              
+              <div style={styles.answersSection}>
+                <div style={styles.answerGroup}>
+                  <div style={styles.answerLabel}>Your Answer:</div>
+                  <div style={{
+                    ...styles.answerValue,
+                    ...(hasAnswer ? 
+                      (isCorrect ? styles.correctAnswer : styles.incorrectAnswer) : 
+                      styles.noAnswer
+                    )
+                  }}>
+                    {userAnswer || 
+                      (isAutoSubmitted ? 'Time ran out - no answer provided' : 'No answer provided')
+                    }
+                  </div>
+                </div>
+                
+                {(!hasAnswer || !isCorrect) && (
+                  <div style={styles.answerGroup}>
+                    <div style={styles.answerLabel}>Correct Answer:</div>
+                    <div style={{...styles.answerValue, ...styles.correctAnswer}}>
+                      {questionData.answer}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div style={styles.questionMeta}>
+                <span>Time Spent: {formatTime(answer?.timeSpent)}</span>
+                <span>
+                  {hasAnswer ? 
+                    `Answered At: ${answer.answeredAt?.toDate?.()?.toLocaleTimeString() || 'Unknown'}` :
+                    'Not answered within time limit'
+                  }
+                </span>
+                {isAutoSubmitted && (
+                  <span style={{color: '#ff9800', fontWeight: 600}}>⏰ Auto-submitted (time expired)</span>
+                )}
+              </div>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -223,145 +247,215 @@ const styles = {
     minHeight: '100vh',
     minWidth: '100vw',
     width: '100vw',
-    height: '100vh',
-    background: '#f5f6fa',
-    fontFamily: 'Inter, Arial, sans-serif',
     display: 'flex',
+    flexDirection: 'column',
     alignItems: 'center',
-    justifyContent: 'center',
-    boxSizing: 'border-box',
-    margin: 0,
-    padding: '1rem',
-  },
-  resultsCard: {
-    background: '#fff',
-    borderRadius: 16,
-    boxShadow: '0 8px 32px rgba(0,0,0,0.12)',
-    padding: '3rem 2.5rem',
-    width: '100%',
-    maxWidth: '600px',
-    textAlign: 'center',
+    justifyContent: 'flex-start',
+    padding: '2rem 1rem',
+    backgroundColor: '#f5f6fa',
+    fontFamily: 'Inter, Arial, sans-serif',
     boxSizing: 'border-box',
   },
   header: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
     marginBottom: '2rem',
+    width: '100%',
+    maxWidth: '1000px',
   },
-  logo: {
-    fontWeight: 800,
-    fontSize: 24,
-    color: '#3f51b5',
-    letterSpacing: 2,
-    marginBottom: '0.5rem',
-  },
-  quizTitle: {
-    fontSize: 20,
-    fontWeight: 600,
-    color: '#222',
-  },
-  scoreSection: {
-    marginBottom: '3rem',
-    padding: '2rem 0',
-    borderRadius: 12,
-    background: 'linear-gradient(135deg, #f8f9ff 0%, #e8f0ff 100%)',
-  },
-  scoreEmoji: {
-    fontSize: '4rem',
-    marginBottom: '1rem',
-  },
-  scoreNumber: {
-    fontSize: '4rem',
-    fontWeight: 800,
-    marginBottom: '0.5rem',
-  },
-  scoreMessage: {
-    fontSize: '1.25rem',
-    fontWeight: 600,
-    color: '#222',
-    marginBottom: '0.5rem',
-  },
-  scoreDetails: {
-    fontSize: '1rem',
-    color: '#666',
-  },
-  statsSection: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
-    gap: '1rem',
-    marginBottom: '3rem',
-  },
-  statCard: {
-    background: '#f8f9fa',
-    borderRadius: 12,
-    padding: '1.5rem 1rem',
-    border: '1px solid #e9ecef',
-  },
-  statIcon: {
-    fontSize: '2rem',
-    marginBottom: '0.5rem',
-  },
-  statLabel: {
-    fontSize: '0.875rem',
-    color: '#666',
-    fontWeight: 600,
-    textTransform: 'uppercase',
-    letterSpacing: '0.5px',
-    marginBottom: '0.5rem',
-  },
-  statValue: {
-    fontSize: '1.5rem',
+  title: {
+    fontSize: 'clamp(24px, 4vw, 32px)',
     fontWeight: 700,
     color: '#3f51b5',
+    margin: 0,
   },
-  actionSection: {
-    display: 'flex',
-    gap: '1rem',
-    justifyContent: 'center',
-    marginBottom: '2rem',
-    flexWrap: 'wrap',
-  },
-  dashboardBtn: {
-    background: '#3f51b5',
+  backBtn: {
+    backgroundColor: '#3f51b5',
     color: '#fff',
     border: 'none',
-    borderRadius: 8,
-    padding: '0.75rem 2rem',
+    borderRadius: 6,
+    padding: '0.75rem 1.5rem',
     fontWeight: 600,
-    fontSize: '1rem',
     cursor: 'pointer',
-    transition: 'background 0.2s ease',
+    fontSize: 'clamp(14px, 2.5vw, 16px)',
   },
-  retakeBtn: {
-    background: '#fff',
-    color: '#3f51b5',
-    border: '2px solid #3f51b5',
-    borderRadius: 8,
-    padding: '0.75rem 2rem',
+  quizName: {
+    fontSize: 'clamp(20px, 3vw, 24px)',
     fontWeight: 600,
-    fontSize: '1rem',
-    cursor: 'pointer',
-    transition: 'all 0.2s ease',
+    color: '#222',
+    marginBottom: '0.5rem',
   },
-  additionalInfo: {
-    paddingTop: '2rem',
-    borderTop: '1px solid #e9ecef',
-  },
-  infoText: {
-    fontSize: '0.875rem',
+  quizMeta: {
+    display: 'flex',
+    gap: '2rem',
+    fontSize: 'clamp(14px, 2.5vw, 16px)',
     color: '#666',
-    margin: '0.25rem 0',
+    flexWrap: 'wrap',
+    marginBottom: '1.5rem',
+  },
+  scoreCard: {
+    textAlign: 'center',
+    minWidth: '200px',
+    flex: '0 0 auto',
+  },
+  scoreNumber: {
+    fontSize: 'clamp(32px, 6vw, 48px)',
+    fontWeight: 700,
+    color: '#3f51b5',
+    marginBottom: '0.5rem',
+  },
+  scorePercentage: {
+    fontSize: 'clamp(24px, 4vw, 32px)',
+    fontWeight: 600,
+    marginBottom: '0.5rem',
+  },
+  scoreLabel: {
+    fontSize: 'clamp(14px, 2.5vw, 16px)',
+    color: '#666',
+  },
+  statsGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))',
+    gap: '1.5rem',
+    flex: 1,
+    minWidth: '300px',
+  },
+  statItem: {
+    textAlign: 'center',
+  },
+  statValue: {
+    display: 'block',
+    fontSize: 'clamp(20px, 3vw, 24px)',
+    fontWeight: 700,
+    color: '#3f51b5',
+    marginBottom: '0.25rem',
+  },
+  statLabel: {
+    fontSize: 'clamp(12px, 2vw, 14px)',
+    color: '#666',
+  },
+  questionsSection: {
+    width: '100%',
+    maxWidth: '1000px',
+  },
+  sectionTitle: {
+    fontSize: 'clamp(18px, 3vw, 22px)',
+    fontWeight: 600,
+    color: '#222',
+    marginBottom: '1.5rem',
+  },
+  questionCard: {
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    padding: '1.5rem',
+    marginBottom: '1.5rem',
+    boxShadow: '0 2px 12px rgba(63,81,181,0.08)',
+    width: '100%',
+    boxSizing: 'border-box',
+  },
+  questionHeader: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: '1rem',
+    flexWrap: 'wrap',
+    gap: '0.5rem',
+  },
+  questionNumber: {
+    fontSize: 'clamp(16px, 2.5vw, 18px)',
+    fontWeight: 600,
+    color: '#3f51b5',
+  },
+  questionResult: {
+    fontSize: 'clamp(14px, 2.5vw, 16px)',
+    fontWeight: 600,
+  },
+  questionText: {
+    fontSize: 'clamp(16px, 2.5vw, 18px)',
+    fontWeight: 500,
+    color: '#222',
+    marginBottom: '1.5rem',
+    lineHeight: 1.5,
+  },
+  answersSection: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '1rem',
+    marginBottom: '1rem',
+  },
+  answerGroup: {
+    display: 'flex',
+    alignItems: 'flex-start',
+    gap: '1rem',
+    flexWrap: 'wrap',
+  },
+  answerLabel: {
+    fontSize: 'clamp(14px, 2.5vw, 16px)',
+    fontWeight: 600,
+    color: '#666',
+    minWidth: '120px',
+    flex: '0 0 auto',
+  },
+  answerValue: {
+    fontSize: 'clamp(14px, 2.5vw, 16px)',
+    padding: '0.5rem 1rem',
+    borderRadius: 6,
+    flex: 1,
+    minWidth: '200px',
+  },
+  correctAnswer: {
+    backgroundColor: '#e8f5e8',
+    color: '#2e7d32',
+    border: '1px solid #4caf50',
+  },
+  incorrectAnswer: {
+    backgroundColor: '#ffebee',
+    color: '#c62828',
+    border: '1px solid #f44336',
+  },
+  noAnswer: {
+    backgroundColor: '#f5f5f5',
+    color: '#666',
+    border: '1px solid #ccc',
+    fontStyle: 'italic',
+  },
+  questionMeta: {
+    display: 'flex',
+    gap: '2rem',
+    fontSize: 'clamp(12px, 2vw, 14px)',
+    color: '#888',
+    paddingTop: '1rem',
+    borderTop: '1px solid #eee',
+    flexWrap: 'wrap',
   },
   loading: {
     textAlign: 'center',
-    color: '#888',
-    fontSize: 18,
-    padding: '2rem 0',
+    fontSize: 'clamp(16px, 3vw, 20px)',
+    color: '#666',
+    padding: '4rem 0',
   },
   error: {
     textAlign: 'center',
-    color: '#e53935',
-    fontSize: 18,
-    padding: '2rem 0',
-    marginBottom: '1rem',
+    fontSize: 'clamp(16px, 3vw, 20px)',
+    color: '#f44336',
+    padding: '4rem 0',
+  },
+  mainSummary: {
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    padding: '2rem',
+    marginBottom: '2rem',
+    boxShadow: '0 2px 12px rgba(63,81,181,0.08)',
+    width: '100%',
+    maxWidth: '1000px',
+    boxSizing: 'border-box',
+  },
+  scoreContainer: {
+    display: 'flex',
+    gap: '2rem',
+    alignItems: 'center',
+    flexWrap: 'wrap',
   },
 };
 

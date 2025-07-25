@@ -1,41 +1,95 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { collection, getDocs, query, orderBy } from 'firebase/firestore';
-import { db } from '../firebase';
+import { db, auth } from '../firebase';
+import { onAuthStateChanged } from 'firebase/auth';
+import LiveQuizManager from '../utils/liveQuizManager';
 
 const AdminDashboard = () => {
   const [selectedCategory, setSelectedCategory] = useState('All');
   const [quizzes, setQuizzes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [user, setUser] = useState(null);
+  const [liveQuizManager] = useState(() => new LiveQuizManager());
   const navigate = useNavigate();
 
   // Get unique categories from quizzes
   const categories = ['All', ...new Set(quizzes.map(quiz => quiz.category))];
 
   useEffect(() => {
-    const fetchQuizzes = async () => {
-      try {
-        const q = query(collection(db, 'quizzes'), orderBy('createdAt', 'desc'));
-        const querySnapshot = await getDocs(q);
-        const quizzesData = querySnapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data(),
-          // Format the createdAt timestamp for display
-          created: doc.data().createdAt?.toDate?.()?.toLocaleDateString?.() || 'Unknown'
-        }));
-        setQuizzes(quizzesData);
-        console.log('Fetched quizzes:', quizzesData);
-      } catch (err) {
-        console.error('Error fetching quizzes:', err);
-        setError('Failed to load quizzes');
-      } finally {
-        setLoading(false);
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      if (currentUser) {
+        setUser(currentUser);
+        fetchQuizzes();
+      } else {
+        navigate('/admin-login');
       }
-    };
+    });
 
-    fetchQuizzes();
-  }, []);
+    return () => unsubscribe();
+  }, [navigate]);
+
+  const fetchQuizzes = async () => {
+    try {
+      const q = query(collection(db, 'quizzes'), orderBy('createdAt', 'desc'));
+      const querySnapshot = await getDocs(q);
+      const quizzesData = querySnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+        // Format the createdAt timestamp for display
+        created: doc.data().createdAt?.toDate?.()?.toLocaleDateString?.() || 'Unknown'
+      }));
+      setQuizzes(quizzesData);
+      console.log('Fetched quizzes:', quizzesData);
+    } catch (err) {
+      console.error('Error fetching quizzes:', err);
+      setError('Failed to load quizzes');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleStartLiveQuiz = async (quiz) => {
+    if (!user) {
+      alert('Please log in to start a live quiz');
+      return;
+    }
+
+    if (quiz.status !== 'Published') {
+      alert('Quiz must be published before starting a live session');
+      return;
+    }
+
+    try {
+      console.log('Starting live quiz for:', quiz.name);
+      
+      const result = await liveQuizManager.createLiveSession(
+        quiz.id, 
+        user.uid, 
+        user.displayName || user.email?.split('@')[0] || 'Admin',
+        {
+          questionTimeLimit: 30,
+          showAnswersAfterEach: true,
+          allowLateJoin: false
+        }
+      );
+
+      if (result.success) {
+        console.log('Live session created successfully:', result);
+        alert(`Live quiz started! Session code: ${result.sessionCode}`);
+        
+        // Navigate to live quiz management page in new tab
+        window.open(`/admin-dashboard/live-session/${result.sessionId}`, '_blank');
+      } else {
+        console.error('Failed to create live session:', result.error);
+        alert(`Failed to start live quiz: ${result.error}`);
+      }
+    } catch (error) {
+      console.error('Error starting live quiz:', error);
+      alert('Failed to start live quiz. Please try again.');
+    }
+  };
 
   const filteredQuizzes = selectedCategory === 'All'
     ? quizzes
@@ -69,7 +123,7 @@ const AdminDashboard = () => {
           <button style={styles.logout}>Logout</button>
         </header>
         <div style={styles.createRow}>
-          <button style={styles.createBtn} onClick={() => navigate('/admin-dashboard/quiz/new')}>
+          <button style={styles.createBtn} onClick={() => window.open('/admin-dashboard/quiz/new', '_blank')}>
             + Create New Quiz
           </button>
         </div>
@@ -94,7 +148,7 @@ const AdminDashboard = () => {
             </div>
           ) : (
             filteredQuizzes.map(quiz => (
-              <div key={quiz.id} style={styles.card} onClick={() => navigate(`/admin-dashboard/quiz/${quiz.id}`)}>
+              <div key={quiz.id} style={styles.card} onClick={() => window.open(`/admin-dashboard/quiz/${quiz.id}`, '_blank')}>
                 <div style={styles.cardHeader}>
                   <span style={styles.quizTitle}>{quiz.name}</span>
                   <span style={{
@@ -107,14 +161,15 @@ const AdminDashboard = () => {
                   <span>Created: {quiz.created}</span>
                 </div>
                 <div style={styles.cardActions}>
-                  <button style={styles.actionBtn} onClick={(e) => { e.stopPropagation(); /* TODO: Edit functionality */ }}>Edit</button>
-                  <button style={styles.actionBtn} onClick={(e) => { e.stopPropagation(); navigate(`/admin-dashboard/quiz/${quiz.id}/live`); }}>Stats/Live</button>
-                  {quiz.status === 'Published' ? (
-                    <button style={styles.actionBtn} onClick={(e) => { e.stopPropagation(); /* TODO: Unpublish functionality */ }}>Unpublish</button>
-                  ) : (
-                    <button style={styles.actionBtn} onClick={(e) => { e.stopPropagation(); /* TODO: Publish functionality */ }}>Publish</button>
-                  )}
-                  <button style={{ ...styles.actionBtn, color: '#e53935' }} onClick={(e) => { e.stopPropagation(); /* TODO: Delete functionality */ }}>Delete</button>
+                  <button 
+                    style={{...styles.actionBtn, backgroundColor: '#4caf50', color: '#fff', flex: 1}} 
+                    onClick={(e) => { 
+                      e.stopPropagation(); 
+                      handleStartLiveQuiz(quiz); 
+                    }}
+                  >
+                    Start Live Quiz
+                  </button>
                 </div>
               </div>
             ))
@@ -240,7 +295,7 @@ const styles = {
     display: 'flex',
     flexDirection: 'column',
     gap: 12,
-    minHeight: 180,
+    minHeight: 200,
     width: '100%',
     boxSizing: 'border-box',
     cursor: 'pointer',
@@ -279,19 +334,26 @@ const styles = {
   },
   cardActions: {
     display: 'flex',
-    gap: 10,
+    gap: 6,
     marginTop: 8,
+    flexWrap: 'nowrap',
+    alignItems: 'center',
+    justifyContent: 'space-between',
   },
   actionBtn: {
     background: '#f2f3f7',
     color: '#3f51b5',
     border: 'none',
-    borderRadius: 6,
-    padding: '7px 14px',
+    borderRadius: 4,
+    padding: '4px 8px',
     fontWeight: 600,
-    fontSize: 14,
+    fontSize: 11,
     cursor: 'pointer',
     transition: 'background 0.2s',
+    whiteSpace: 'nowrap',
+    flex: 1,
+    textAlign: 'center',
+    minWidth: 0,
   },
   empty: {
     gridColumn: '1/-1',

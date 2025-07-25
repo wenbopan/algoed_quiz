@@ -10,6 +10,9 @@ import QuizLivePage from './pages/QuizLivePage';
 import StudentDashboard from './pages/StudentDashboard';
 import QuizTakingPage from './pages/QuizTakingPage';
 import QuizResultsPage from './pages/QuizResultsPage';
+import LiveSessionManagement from './pages/LiveSessionManagement';
+import JoinLiveSession from './pages/JoinLiveSession';
+import LiveQuizStudent from './pages/LiveQuizStudent';
 
 function App() {
   return (
@@ -25,12 +28,17 @@ function App() {
         <Route path="/:userId/quiz/:quizId" element={<QuizTakingPage />} />
         <Route path="/:userId/quiz/:quizId/results" element={<QuizResultsPage />} />
         <Route path="/:userId/quiz/:quizId/resume" element={<div>Resume Quiz Page</div>} />
+        <Route path="/:userId/live-quiz/:sessionId" element={<LiveQuizStudent />} />
+        
+        {/* Live Quiz routes */}
+        <Route path="/join-live-session" element={<JoinLiveSession />} />
         
         {/* Admin routes */}
         <Route path="/admin-dashboard" element={<AdminDashboard />} />
         <Route path="/admin-dashboard/quiz/new" element={<QuizCreatePage />} />
         <Route path="/admin-dashboard/quiz/:quizId" element={<QuizDetailPage />} />
         <Route path="/admin-dashboard/quiz/:quizId/live" element={<QuizLivePage />} />
+        <Route path="/admin-dashboard/live-session/:sessionId" element={<LiveSessionManagement />} />
         
         {/* Legacy redirect for old dashboard route */}
         <Route path="/dashboard" element={<Navigate to="/login" replace />} />

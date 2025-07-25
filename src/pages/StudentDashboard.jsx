@@ -89,35 +89,38 @@ const StudentDashboard = () => {
       
       setQuizzes(allQuizzes);
 
-      // Fetch real user progress data (now that index is created)
-      console.log('Fetching user progress data...');
-      const progressQuery = query(
-        collection(db, 'userProgress'),
+      // Fetch real user progress data from live quiz results (live quiz sessions)
+      console.log('Fetching live quiz results...');
+      const liveResultsQuery = query(
+        collection(db, 'liveQuizResults'),
         where('userId', '==', currentUserId),
-        where('status', '==', 'completed'),
-        orderBy('completedAt', 'desc'),
-        limit(10) // Get last 10 completed quizzes
+        where('status', '==', 'in_progress'), // Live quiz results use "in_progress" even when completed
+        orderBy('lastAnsweredAt', 'desc'),
+        limit(10) // Get last 10 completed live quizzes
       );
       
-      const progressSnapshot = await getDocs(progressQuery);
-      console.log('User progress query completed. Number of completed quizzes:', progressSnapshot.size);
+      const liveResultsSnapshot = await getDocs(liveResultsQuery);
+      console.log('Live quiz results query completed. Number of live quizzes:', liveResultsSnapshot.size);
       
-      const completedQuizzes = progressSnapshot.docs.map(doc => {
+      const completedQuizzes = liveResultsSnapshot.docs.map(doc => {
         const data = doc.data();
+        const percentage = data.totalQuestions > 0 ? ((data.currentScore / data.totalQuestions) * 100).toFixed(1) : 0;
         return {
           id: doc.id,
           quizId: data.quizId,
-          quizName: data.quizName || 'Unknown Quiz',
-          score: data.finalScore || data.score || 0,
+          quizName: data.quizName || 'Live Quiz',
+          score: data.currentScore || 0,
           totalQuestions: data.totalQuestions || 0,
-          percentageScore: data.percentageScore || 0,
-          timeTaken: data.timeTaken || 0,
-          completedAt: data.completedAt?.toDate?.() || new Date(),
-          startedAt: data.startedAt?.toDate?.() || new Date()
+          percentageScore: parseFloat(percentage),
+          questionsAnswered: data.questionsAnswered || 0,
+          completedAt: data.lastAnsweredAt?.toDate?.() || new Date(),
+          startedAt: data.startedAt?.toDate?.() || new Date(),
+          sessionId: data.sessionId, // Keep session ID for navigation
+          answers: data.answers || [] // Keep answers for detailed view
         };
       });
 
-      console.log('Completed quizzes:', completedQuizzes);
+      console.log('Completed live quizzes:', completedQuizzes);
 
       // Calculate real user progress metrics
       const totalAttempts = completedQuizzes.length;
@@ -159,12 +162,17 @@ const StudentDashboard = () => {
       const recentQuizData = completedQuizzes.slice(0, 5).map(quiz => {
         // Find the actual quiz data to get the real name
         const actualQuiz = allQuizzes.find(q => q.id === quiz.quizId);
+        const totalQuestionsInQuiz = actualQuiz?.questions?.length || quiz.totalQuestions || 0;
+        const correctAnswers = quiz.score;
+        const actualPercentage = totalQuestionsInQuiz > 0 ? ((correctAnswers / totalQuestionsInQuiz) * 100).toFixed(1) : 0;
+        
         return {
           id: quiz.quizId,
           quizName: actualQuiz?.name || quiz.quizName || 'Unknown Quiz', // Use actual quiz name
-          score: quiz.score,
-          totalQuestions: quiz.totalQuestions,
-          percentageScore: quiz.percentageScore,
+          score: correctAnswers, // Correct answers
+          totalQuestions: totalQuestionsInQuiz, // Total questions in the quiz
+          percentageScore: parseFloat(actualPercentage), // Recalculated percentage based on total questions
+          questionsAnswered: quiz.questionsAnswered, // Keep for display "Questions Answered: X/Y"
           completedAt: quiz.completedAt,
           timeTaken: quiz.timeTaken,
           category: actualQuiz?.category || 'Unknown' // Add category for display
@@ -348,6 +356,10 @@ const StudentDashboard = () => {
     }
   };
 
+  const handleViewQuizResults = (quiz) => {
+    navigate(`/${userId}/quiz/${quiz.id}/results`);
+  };
+
   const toggleSection = (section) => {
     setExpandedSections(prev => ({
       ...prev,
@@ -385,6 +397,9 @@ const StudentDashboard = () => {
             algoed <span style={styles.studentBadge}>Student Portal</span>
           </div>
           <div style={styles.userInfo}>
+            <button style={styles.joinLiveBtn} onClick={() => navigate('/join-live-session')}>
+              🎮 Join Live Quiz
+            </button>
             <span style={styles.welcomeText}>Welcome back, {user?.displayName || user?.email?.split('@')[0]}! 👋</span>
             <button style={styles.logoutBtn} onClick={handleLogout}>Logout</button>
           </div>
@@ -469,13 +484,17 @@ const StudentDashboard = () => {
                 </div>
               ) : (
                 filterQuizzes(recentQuizzes).map(quiz => (
-                  <div key={quiz.id} style={styles.listItem}>
+                  <div 
+                    key={quiz.id} 
+                    style={{...styles.listItem, cursor: 'pointer'}} 
+                    onClick={() => handleViewQuizResults(quiz)}
+                  >
                     <div style={styles.itemInfo}>
                       <span style={styles.itemTitle}>{quiz.quizName}</span>
                       <span style={styles.itemDetails}>
                         Score: {quiz.score}/{quiz.totalQuestions} ({quiz.percentageScore}%) • 
                         Completed: {quiz.completedAt.toLocaleDateString()} • 
-                        Time: {Math.floor(quiz.timeTaken / 60)}m {quiz.timeTaken % 60}s • 
+                        Questions Answered: {quiz.questionsAnswered}/{quiz.totalQuestions} • 
                         Category: {quiz.category}
                       </span>
                     </div>
@@ -486,8 +505,14 @@ const StudentDashboard = () => {
                       }}>
                         {quiz.percentageScore >= 90 ? '⭐' : quiz.percentageScore >= 70 ? '👍' : '📚'}
                       </span>
-                      <button style={styles.retakeBtn} onClick={() => handleQuizStart(quiz.id)}>
-                        Retake
+                      <button 
+                        style={styles.viewBtn} 
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleViewQuizResults(quiz);
+                        }}
+                      >
+                        View Results
                       </button>
                     </div>
                   </div>
@@ -662,6 +687,19 @@ const styles = {
     fontWeight: 600,
     fontSize: 14,
     cursor: 'pointer',
+  },
+  joinLiveBtn: {
+    background: '#4caf50',
+    color: '#fff',
+    border: 'none',
+    borderRadius: 6,
+    padding: '8px 16px',
+    fontWeight: 600,
+    fontSize: 14,
+    cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
   },
   progressSection: {
     background: '#fff',
@@ -895,6 +933,16 @@ const styles = {
     color: '#2e7d32', // Darker green text
     margin: 0,
     fontWeight: 600,
+  },
+  viewBtn: {
+    background: '#3f51b5',
+    color: '#fff',
+    border: 'none',
+    borderRadius: 4,
+    padding: '6px 12px',
+    fontWeight: 600,
+    fontSize: 12,
+    cursor: 'pointer',
   },
 };
 
