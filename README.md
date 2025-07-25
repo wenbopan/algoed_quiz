@@ -46,6 +46,22 @@ npm run dev
 ```
 
 The application will be available at `http://localhost:5173` (or another port if 5173 is in use).
+The login portal for admin is `http://localhost:5173/admin-dashboard`
+You can either register your account or use my test account
+```
+email: panwenborichard@gmail.com
+password:12345678
+```
+
+The login portal for users is `http://localhost:5173/login`, after login, it will redirect you to the user dashboard page. I also have two test accounts you can use directly:
+```
+email: panwenbocn@gmail.com
+password:12345678
+
+email: oatest326@gmail.com
+password:12345678
+```
+Again, feel free to create your own account for testing purposes. 
 
 
 ## 📋 User Flows
@@ -82,6 +98,7 @@ The application will be available at `http://localhost:5173` (or another port if
    ![Student Quiz History](images/students_quiz_history.png)
 3. **Join Live Session**: 
    - Enter session code from admin, we assume that there's a reservation mechanism which allows participants to recive code generated from adminPage when session starts. 
+   - Click the Join Live Quiz button and enter the code from admin. 
    - After entering the code, users are expected to wait in lobby until admin starts the session.
 4. **Take Quiz**:
    - Answer questions within time limit
