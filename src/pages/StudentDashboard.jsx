@@ -34,9 +34,11 @@ const StudentDashboard = () => {
   const filterQuizzes = (quizzes) => {
     if (!searchTerm) return quizzes;
     
-    return quizzes.filter(quiz => 
-      quiz.name.toLowerCase().includes(searchTerm.toLowerCase())
-    );
+    return quizzes.filter(quiz => {
+      // Handle both quiz objects (with 'name') and recent quiz objects (with 'quizName')
+      const quizName = quiz.name || quiz.quizName || '';
+      return quizName.toLowerCase().includes(searchTerm.toLowerCase());
+    });
   };
 
   useEffect(() => {
@@ -87,53 +89,241 @@ const StudentDashboard = () => {
       
       setQuizzes(allQuizzes);
 
-      // Real user progress (empty for new users)
+      // Fetch real user progress data (now that index is created)
+      console.log('Fetching user progress data...');
+      const progressQuery = query(
+        collection(db, 'userProgress'),
+        where('userId', '==', currentUserId),
+        where('status', '==', 'completed'),
+        orderBy('completedAt', 'desc'),
+        limit(10) // Get last 10 completed quizzes
+      );
+      
+      const progressSnapshot = await getDocs(progressQuery);
+      console.log('User progress query completed. Number of completed quizzes:', progressSnapshot.size);
+      
+      const completedQuizzes = progressSnapshot.docs.map(doc => {
+        const data = doc.data();
+        return {
+          id: doc.id,
+          quizId: data.quizId,
+          quizName: data.quizName || 'Unknown Quiz',
+          score: data.finalScore || data.score || 0,
+          totalQuestions: data.totalQuestions || 0,
+          percentageScore: data.percentageScore || 0,
+          timeTaken: data.timeTaken || 0,
+          completedAt: data.completedAt?.toDate?.() || new Date(),
+          startedAt: data.startedAt?.toDate?.() || new Date()
+        };
+      });
+
+      console.log('Completed quizzes:', completedQuizzes);
+
+      // Calculate real user progress metrics
+      const totalAttempts = completedQuizzes.length;
+      const averageScore = totalAttempts > 0 
+        ? Math.round(completedQuizzes.reduce((sum, quiz) => sum + quiz.percentageScore, 0) / totalAttempts)
+        : 0;
+      
+      // Calculate streak (consecutive days with quiz activity)
+      let currentStreak = 0;
+      if (completedQuizzes.length > 0) {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        
+        for (let i = 0; i < completedQuizzes.length; i++) {
+          const quizDate = new Date(completedQuizzes[i].completedAt);
+          quizDate.setHours(0, 0, 0, 0);
+          
+          const daysDiff = Math.floor((today - quizDate) / (1000 * 60 * 60 * 24));
+          
+          if (daysDiff === i) {
+            currentStreak++;
+          } else {
+            break;
+          }
+        }
+      }
+
       const realProgress = {
-        completedQuizzes: 0,
-        averageScore: 0,
-        currentStreak: 0,
-        totalAttempts: 0
+        completedQuizzes: totalAttempts,
+        averageScore: averageScore,
+        currentStreak: currentStreak,
+        totalAttempts: totalAttempts
       };
+      
+      console.log('Calculated user progress:', realProgress);
       setUserProgress(realProgress);
 
-      // Real recent quizzes (empty for new users)
-      setRecentQuizzes([]);
+      // Set recent quizzes from real data with actual quiz names
+      const recentQuizData = completedQuizzes.slice(0, 5).map(quiz => {
+        // Find the actual quiz data to get the real name
+        const actualQuiz = allQuizzes.find(q => q.id === quiz.quizId);
+        return {
+          id: quiz.quizId,
+          quizName: actualQuiz?.name || quiz.quizName || 'Unknown Quiz', // Use actual quiz name
+          score: quiz.score,
+          totalQuestions: quiz.totalQuestions,
+          percentageScore: quiz.percentageScore,
+          completedAt: quiz.completedAt,
+          timeTaken: quiz.timeTaken,
+          category: actualQuiz?.category || 'Unknown' // Add category for display
+        };
+      });
+      
+      console.log('Recent quiz data:', recentQuizData);
+      setRecentQuizzes(recentQuizData);
 
-      // Real current quiz (null - no quiz in progress)
-      setCurrentQuiz(null);
+      // Check for in-progress quiz
+      const inProgressQuery = query(
+        collection(db, 'userProgress'),
+        where('userId', '==', currentUserId),
+        where('status', '==', 'in_progress'),
+        limit(1)
+      );
+      
+      const inProgressSnapshot = await getDocs(inProgressQuery);
+      if (!inProgressSnapshot.empty) {
+        const inProgressData = inProgressSnapshot.docs[0].data();
+        const actualQuiz = allQuizzes.find(q => q.id === inProgressData.quizId);
+        const currentQuizData = {
+          id: inProgressData.quizId,
+          name: actualQuiz?.name || inProgressData.quizName || 'Unknown Quiz', // Use actual quiz name
+          currentQuestion: inProgressData.currentQuestion || 1,
+          totalQuestions: inProgressData.totalQuestions || 0,
+          startedAt: inProgressData.startedAt?.toDate?.() || new Date()
+        };
+        console.log('Found in-progress quiz:', currentQuizData);
+        setCurrentQuiz(currentQuizData);
+      } else {
+        console.log('No in-progress quiz found');
+        setCurrentQuiz(null);
+      }
 
-      // Use actual Firebase quizzes for recommended section
+      // Smart recommendations: untaken quizzes + low-scoring completed quizzes (< 80%)
       if (allQuizzes.length > 0) {
-        console.log('Creating recommended quizzes from Firebase data...');
-        const actualRecommended = allQuizzes.slice(0, 5).map(quiz => ({
-          ...quiz,
-          // Add some demo reasoning for why it's recommended
-          recommendedReason: quiz.category === 'Philosophy' ? 'Based on your Philosophy progress' :
-                            quiz.category === 'Physics' ? 'Based on your Physics interests' :
-                            quiz.category === 'Math' ? 'Perfect for your skill level' :
-                            'Popular in your learning path'
-        }));
-        console.log('Actual recommended quizzes:', actualRecommended);
-        console.log('Setting recommended quizzes...');
+        console.log('Creating smart recommendations...');
+        
+        const completedQuizIds = new Set(completedQuizzes.map(q => q.quizId));
+        const lowScoringQuizIds = new Set(
+          completedQuizzes
+            .filter(q => q.percentageScore < 80)
+            .map(q => q.quizId)
+        );
+        
+        console.log('Completed quiz IDs:', Array.from(completedQuizIds));
+        console.log('Low-scoring quiz IDs (< 80%):', Array.from(lowScoringQuizIds));
+        console.log('All available quiz IDs:', allQuizzes.map(q => q.id));
+        
+        // Include: 1) Untaken quizzes, 2) Low-scoring completed quizzes
+        const recommendedQuizzes = allQuizzes.filter(quiz => 
+          !completedQuizIds.has(quiz.id) || lowScoringQuizIds.has(quiz.id)
+        );
+        
+        console.log('Recommended quizzes:', recommendedQuizzes.map(q => ({ id: q.id, name: q.name })));
+        
+        const actualRecommended = recommendedQuizzes.slice(0, 5).map(quiz => {
+          const completedQuiz = completedQuizzes.find(c => c.quizId === quiz.id);
+          const isLowScoring = completedQuiz && completedQuiz.percentageScore < 80;
+          
+          return {
+            ...quiz,
+            recommendedReason: isLowScoring ? 
+              `🎯 Retake opportunity! Previous score: ${completedQuiz.percentageScore}%` :
+              quiz.category === 'Philosophy' ? 'Based on your learning progress' :
+              quiz.category === 'Physics' ? 'Expand your Physics knowledge' :
+              quiz.category === 'Math' ? 'Perfect for your skill level' :
+              'Popular in your learning path'
+          };
+        });
+        
+        console.log('Final recommended quizzes:', actualRecommended.map(q => ({ 
+          id: q.id, 
+          name: q.name, 
+          reason: q.recommendedReason 
+        })));
         setRecommendedQuizzes(actualRecommended);
-        console.log('Recommended quizzes set!');
       } else {
         console.log('No quizzes found in Firebase, setting empty array');
         setRecommendedQuizzes([]);
       }
 
-      // Popular quizzes based on actual Firebase data
-      const popular = allQuizzes.slice(0, 5).map(quiz => ({
-        ...quiz,
-        attempts: Math.floor(Math.random() * 2000) + 500, // This could be real data later
-        rating: (4 + Math.random()).toFixed(1) // This could be real data later
-      }));
+      // Calculate real quiz statistics from userProgress data
+      console.log('Calculating real quiz statistics...');
+      
+      // Fetch all completed quiz attempts for statistics
+      const allProgressQuery = query(
+        collection(db, 'userProgress'),
+        where('status', '==', 'completed')
+      );
+      
+      const allProgressSnapshot = await getDocs(allProgressQuery);
+      console.log('Total completed attempts across all users:', allProgressSnapshot.size);
+      
+      // Group attempts by quiz ID
+      const quizStats = {};
+      allProgressSnapshot.docs.forEach(doc => {
+        const data = doc.data();
+        const quizId = data.quizId;
+        
+        if (!quizStats[quizId]) {
+          quizStats[quizId] = {
+            attempts: 0,
+            scores: [],
+            lastAttempt: null
+          };
+        }
+        
+        quizStats[quizId].attempts++;
+        quizStats[quizId].scores.push(data.percentageScore || 0);
+        
+        const attemptDate = data.completedAt?.toDate?.() || new Date();
+        if (!quizStats[quizId].lastAttempt || attemptDate > quizStats[quizId].lastAttempt) {
+          quizStats[quizId].lastAttempt = attemptDate;
+        }
+      });
+      
+      console.log('Quiz statistics:', quizStats);
+
+      // Popular quizzes with real data
+      const popular = allQuizzes.slice(0, 5).map(quiz => {
+        const stats = quizStats[quiz.id] || { attempts: 0, scores: [] };
+        const averageScore = stats.scores.length > 0 
+          ? stats.scores.reduce((sum, score) => sum + score, 0) / stats.scores.length
+          : 0;
+        
+        return {
+          ...quiz,
+          attempts: stats.attempts, // Real attempt count
+          averageScore: Math.round(averageScore), // Real average score
+          rating: Math.min(5, Math.max(1, (averageScore / 20) + 1)).toFixed(1), // Convert score to 1-5 rating
+          lastAttempt: stats.lastAttempt
+        };
+      }).sort((a, b) => b.attempts - a.attempts); // Sort by popularity (most attempts first)
+      
+      console.log('Popular quizzes with real stats:', popular.map(q => ({
+        name: q.name,
+        attempts: q.attempts,
+        averageScore: q.averageScore,
+        rating: q.rating
+      })));
+      
       setPopularQuizzes(popular);
 
     } catch (error) {
       console.error('Error fetching dashboard data:', error);
       console.error('Error details:', error.message);
       setRecommendedQuizzes([]); // Set empty array on error
+      
+      // Set fallback empty states on error
+      setUserProgress({
+        completedQuizzes: 0,
+        averageScore: 0,
+        currentStreak: 0,
+        totalAttempts: 0
+      });
+      setRecentQuizzes([]);
+      setCurrentQuiz(null);
     } finally {
       setLoading(false);
     }
@@ -281,17 +471,20 @@ const StudentDashboard = () => {
                 filterQuizzes(recentQuizzes).map(quiz => (
                   <div key={quiz.id} style={styles.listItem}>
                     <div style={styles.itemInfo}>
-                      <span style={styles.itemTitle}>{quiz.name}</span>
+                      <span style={styles.itemTitle}>{quiz.quizName}</span>
                       <span style={styles.itemDetails}>
-                        {quiz.score}% • {quiz.completedAt} • {quiz.category}
+                        Score: {quiz.score}/{quiz.totalQuestions} ({quiz.percentageScore}%) • 
+                        Completed: {quiz.completedAt.toLocaleDateString()} • 
+                        Time: {Math.floor(quiz.timeTaken / 60)}m {quiz.timeTaken % 60}s • 
+                        Category: {quiz.category}
                       </span>
                     </div>
                     <div style={styles.itemActions}>
                       <span style={{
                         ...styles.scoreIndicator,
-                        color: quiz.score >= 90 ? '#4caf50' : quiz.score >= 70 ? '#ff9800' : '#f44336'
+                        color: quiz.percentageScore >= 90 ? '#4caf50' : quiz.percentageScore >= 70 ? '#ff9800' : '#f44336'
                       }}>
-                        {quiz.score >= 90 ? '⭐' : quiz.score >= 70 ? '👍' : '📚'}
+                        {quiz.percentageScore >= 90 ? '⭐' : quiz.percentageScore >= 70 ? '👍' : '📚'}
                       </span>
                       <button style={styles.retakeBtn} onClick={() => handleQuizStart(quiz.id)}>
                         Retake
@@ -351,7 +544,7 @@ const StudentDashboard = () => {
             onClick={() => toggleSection('popular')}
           >
             <h3 style={styles.sectionTitle}>
-              🔥 Popular This Week ({filterQuizzes(popularQuizzes).length})
+              🔥 Most Popular Quizzes ({filterQuizzes(popularQuizzes).length})
             </h3>
             <span style={styles.expandIcon}>
               {expandedSections.popular ? '▼' : '▶'}
@@ -367,7 +560,10 @@ const StudentDashboard = () => {
                     <div style={styles.itemInfo}>
                       <span style={styles.itemTitle}>{quiz.name}</span>
                       <span style={styles.itemDetails}>
-                        {quiz.attempts} attempts • ⭐ {quiz.rating}/5 • {quiz.questions?.length || 0} questions
+                        {quiz.attempts} {quiz.attempts === 1 ? 'attempt' : 'attempts'} • 
+                        Avg Score: {quiz.averageScore}% • 
+                        ⭐ {quiz.rating}/5 • 
+                        {quiz.questions?.length || 0} questions
                       </span>
                     </div>
                     <div style={styles.itemActions}>
